@@ -1,0 +1,469 @@
+ممتاز! سأضيف لك كل التحسينات الثلاثة معاً: 💧 قطرات الماء + 🎬 الأنيميشن + 🖼️ خلفية HDRI ومشهد كامل لتحقيق واقعية سينمائية احترافية.
+
+## 🍓✨ السكربت الكامل المُحسَّن
+
+```python
+import bpy
+import bmesh
+import math
+import random
+from mathutils import Vector, noise
+
+# ============================================
+# 1. تنظيف المشهد
+# ============================================
+bpy.ops.object.select_all(action='SELECT')
+bpy.ops.object.delete(use_global=False)
+
+for material in bpy.data.materials:
+    bpy.data.materials.remove(material)
+
+for world in bpy.data.worlds:
+    bpy.data.worlds.remove(world)
+
+# إنشاء عالم جديد
+new_world = bpy.data.worlds.new("StudioWorld")
+bpy.context.scene.world = new_world
+
+# ============================================
+# 2. إنشاء جسم الفراولة
+# ============================================
+def create_strawberry_body():
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=1, location=(0, 0, 1.2), segments=64, ring_count=32)
+    berry = bpy.context.active_object
+    berry.name = "Strawberry"
+    
+    bpy.ops.object.mode_set(mode='EDIT')
+    bm = bmesh.from_edit_mesh(berry.data)
+    
+    for v in bm.verts:
+        if v.co.z < 0:
+            factor = abs(v.co.z) ** 1.5
+            v.co.x *= (1 - factor * 0.7)
+            v.co.y *= (1 - factor * 0.7)
+            v.co.z *= 1.4
+        else:
+            v.co.x *= 1.05
+            v.co.y *= 1.05
+        
+        n = noise.noise(v.co * 2.5) * 0.03
+        v.co += v.normal * n
+    
+    bmesh.update_edit_mesh(berry.data)
+    bpy.ops.object.mode_set(mode='OBJECT')
+    bpy.ops.object.shade_smooth()
+    
+    subsurf = berry.modifiers.new(name="Subsurf", type='SUBSURF')
+    subsurf.levels = 3
+    subsurf.render_levels = 4
+    
+    return berry
+
+berry = create_strawberry_body()
+
+# ============================================
+# 3. البذور
+# ============================================
+def create_seed():
+    bpy.ops.mesh.primitive_uv_sphere_add(radius=0.04, segments=16, ring_count=8, location=(10, 10, 10))
+    seed = bpy.context.active_object
+    seed.name = "Seed"
+    seed.scale = (1.0, 1.5, 0.6)
+    bpy.ops.object.transform_apply(scale=True)
+    bpy.ops.object.shade_smooth()
+    return seed
+
+seed_template = create_seed()
+
+def create_seed_material():
+    mat = bpy.data.materials.new(name="SeedMaterial")
+    mat.use_nodes = True
+    principled = mat.node_tree.nodes.get('Principled BSDF')
+    principled.inputs['Base Color'].default_value = (0.85, 0.72, 0.15, 1)
+    principled.inputs['Roughness'].default_value = 0.4
+    return mat
+
+seed_template.data.materials.append(create_seed_material())
+
+# توزيع البذور
+bpy.context.view_layer.objects.active = berry
+psys = berry.modifiers.new(name="SeedsParticles", type='PARTICLE_SYSTEM')
+settings = berry.particle_systems[0].settings
+settings.type = 'HAIR'
+settings.use_advanced_hair = True
+settings.count = 200
+settings.hair_length = 0.05
+settings.render_type = 'OBJECT'
+settings.instance_object = seed_template
+settings.particle_size = 1.0
+settings.size_random = 0.2
+settings.use_rotation_instance = True
+settings.rotation_mode = 'NOR'
+settings.phase_factor_random = 1.0
+
+# ============================================
+# 4. مادة الفراولة المتقدمة
+# ============================================
+def create_strawberry_material():
+    mat = bpy.data.materials.new(name="StrawberrySkin")
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+    
+    output = nodes.new('ShaderNodeOutputMaterial')
+    principled = nodes.new('ShaderNodeBsdfPrincipled')
+    tex_coord = nodes.new('ShaderNodeTexCoord')
+    mapping = nodes.new('ShaderNodeMapping')
+    
+    noise_tex = nodes.new('ShaderNodeTexNoise')
+    noise_tex.inputs['Scale'].default_value = 15.0
+    noise_tex.inputs['Detail'].default_value = 8.0
+    
+    color_ramp = nodes.new('ShaderNodeValToRGB')
+    color_ramp.color_ramp.elements[0].position = 0.35
+    color_ramp.color_ramp.elements[0].color = (0.35, 0.02, 0.02, 1)
+    color_ramp.color_ramp.elements[1].position = 0.75
+    color_ramp.color_ramp.elements[1].color = (0.95, 0.08, 0.05, 1)
+    
+    bump = nodes.new('ShaderNodeBump')
+    bump.inputs['Strength'].default_value = 0.3
+    noise_bump = nodes.new('ShaderNodeTexNoise')
+    noise_bump.inputs['Scale'].default_value = 80.0
+    
+    principled.inputs['Subsurface Weight'].default_value = 0.15
+    principled.inputs['Subsurface Radius'].default_value = (1.0, 0.2, 0.1)
+    principled.inputs['Roughness'].default_value = 0.35
+    principled.inputs['Coat Weight'].default_value = 0.3
+    principled.inputs['Coat Roughness'].default_value = 0.15
+    
+    links.new(tex_coord.outputs['Generated'], mapping.inputs['Vector'])
+    links.new(mapping.outputs['Vector'], noise_tex.inputs['Vector'])
+    links.new(noise_tex.outputs['Fac'], color_ramp.inputs['Fac'])
+    links.new(color_ramp.outputs['Color'], principled.inputs['Base Color'])
+    links.new(noise_bump.outputs['Fac'], bump.inputs['Height'])
+    links.new(bump.outputs['Normal'], principled.inputs['Normal'])
+    links.new(principled.outputs['BSDF'], output.inputs['Surface'])
+    
+    return mat
+
+berry.data.materials.append(create_strawberry_material())
+
+# ============================================
+# 5. التاج الأخضر (Calyx)
+# ============================================
+def create_calyx():
+    leaves = []
+    for i in range(6):
+        angle = (i / 6) * 2 * math.pi
+        bpy.ops.mesh.primitive_plane_add(size=0.5, location=(
+            math.cos(angle) * 0.3,
+            math.sin(angle) * 0.3,
+            2.3
+        ))
+        leaf = bpy.context.active_object
+        leaf.rotation_euler = (math.radians(35), 0, angle)
+        
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.subdivide(number_cuts=8)
+        bpy.ops.object.mode_set(mode='OBJECT')
+        
+        solid = leaf.modifiers.new(name="Solidify", type='SOLIDIFY')
+        solid.thickness = 0.01
+        leaf.parent = berry
+        leaves.append(leaf)
+    
+    return leaves
+
+calyx_leaves = create_calyx()
+
+def create_leaf_material():
+    mat = bpy.data.materials.new(name="LeafMaterial")
+    mat.use_nodes = True
+    principled = mat.node_tree.nodes.get('Principled BSDF')
+    principled.inputs['Base Color'].default_value = (0.1, 0.45, 0.08, 1)
+    principled.inputs['Roughness'].default_value = 0.5
+    principled.inputs['Subsurface Weight'].default_value = 0.2
+    return mat
+
+leaf_mat = create_leaf_material()
+for leaf in calyx_leaves:
+    leaf.data.materials.append(leaf_mat)
+
+# ============================================
+# 6. 💧 قطرات الماء الواقعية
+# ============================================
+def create_water_material():
+    mat = bpy.data.materials.new(name="WaterDrop")
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    nodes.clear()
+    
+    output = nodes.new('ShaderNodeOutputMaterial')
+    principled = nodes.new('ShaderNodeBsdfPrincipled')
+    
+    principled.inputs['Base Color'].default_value = (1.0, 1.0, 1.0, 1)
+    principled.inputs['Roughness'].default_value = 0.0
+    principled.inputs['Transmission Weight'].default_value = 1.0
+    principled.inputs['IOR'].default_value = 1.33
+    principled.inputs['Alpha'].default_value = 0.9
+    
+    mat.node_tree.links.new(principled.outputs['BSDF'], output.inputs['Surface'])
+    return mat
+
+water_mat = create_water_material()
+
+def create_water_droplets():
+    droplets = []
+    for i in range(25):
+        # تموضع عشوائي على سطح الفراولة
+        theta = random.uniform(0, 2 * math.pi)
+        phi = random.uniform(math.pi * 0.2, math.pi * 0.9)
+        
+        x = 1.05 * math.sin(phi) * math.cos(theta)
+        y = 1.05 * math.sin(phi) * math.sin(theta)
+        z = 1.2 + math.cos(phi) * (1.4 if phi > math.pi/2 else 1.0)
+        
+        size = random.uniform(0.04, 0.09)
+        bpy.ops.mesh.primitive_uv_sphere_add(radius=size, location=(x, y, z), segments=24, ring_count=12)
+        drop = bpy.context.active_object
+        drop.name = f"WaterDrop_{i}"
+        
+        # تسطيح القطرة (تشبه قطرة حقيقية على السطح)
+        drop.scale.z = 0.5
+        bpy.ops.object.transform_apply(scale=True)
+        bpy.ops.object.shade_smooth()
+        
+        drop.data.materials.append(water_mat)
+        drop.parent = berry
+        droplets.append(drop)
+    
+    return droplets
+
+water_drops = create_water_droplets()
+
+# ============================================
+# 7. 🍽️ المشهد الكامل (طاولة + خلفية)
+# ============================================
+# طاولة خشبية
+bpy.ops.mesh.primitive_plane_add(size=20, location=(0, 0, 0))
+table = bpy.context.active_object
+table.name = "Table"
+
+def create_wood_material():
+    mat = bpy.data.materials.new(name="WoodTable")
+    mat.use_nodes = True
+    nodes = mat.node_tree.nodes
+    links = mat.node_tree.links
+    nodes.clear()
+    
+    output = nodes.new('ShaderNodeOutputMaterial')
+    principled = nodes.new('ShaderNodeBsdfPrincipled')
+    tex_coord = nodes.new('ShaderNodeTexCoord')
+    mapping = nodes.new('ShaderNodeMapping')
+    mapping.inputs['Scale'].default_value = (3, 1, 1)
+    
+    wave = nodes.new('ShaderNodeTexWave')
+    wave.inputs['Scale'].default_value = 2.0
+    wave.inputs['Distortion'].default_value = 10.0
+    wave.inputs['Detail'].default_value = 5.0
+    
+    color_ramp = nodes.new('ShaderNodeValToRGB')
+    color_ramp.color_ramp.elements[0].color = (0.15, 0.08, 0.04, 1)
+    color_ramp.color_ramp.elements[1].color = (0.35, 0.2, 0.1, 1)
+    
+    principled.inputs['Roughness'].default_value = 0.6
+    
+    links.new(tex_coord.outputs['Generated'], mapping.inputs['Vector'])
+    links.new(mapping.outputs['Vector'], wave.inputs['Vector'])
+    links.new(wave.outputs['Fac'], color_ramp.inputs['Fac'])
+    links.new(color_ramp.outputs['Color'], principled.inputs['Base Color'])
+    links.new(principled.outputs['BSDF'], output.inputs['Surface'])
+    
+    return mat
+
+table.data.materials.append(create_wood_material())
+
+# أوراق نعناع زخرفية
+for i in range(3):
+    angle = random.uniform(0, 2 * math.pi)
+    dist = random.uniform(1.5, 2.5)
+    bpy.ops.mesh.primitive_plane_add(size=0.4, location=(
+        math.cos(angle) * dist,
+        math.sin(angle) * dist,
+        0.02
+    ))
+    mint = bpy.context.active_object
+    mint.rotation_euler = (0, 0, random.uniform(0, math.pi))
+    mint.data.materials.append(leaf_mat)
+
+# فراولات إضافية في الخلفية
+for i in range(2):
+    bpy.ops.mesh.primitive_uv_sphere_add(
+        radius=0.5,
+        location=(random.uniform(-2, 2), random.uniform(2, 3), 0.5),
+        segments=32
+    )
+    extra = bpy.context.active_object
+    extra.scale.z = 1.3
+    bpy.ops.object.transform_apply(scale=True)
+    bpy.ops.object.shade_smooth()
+    extra.data.materials.append(berry.data.materials[0])
+
+# ============================================
+# 8. 🖼️ خلفية HDRI إجرائية (Sky + Studio)
+# ============================================
+world = bpy.context.scene.world
+world.use_nodes = True
+w_nodes = world.node_tree.nodes
+w_links = world.node_tree.links
+w_nodes.clear()
+
+w_output = w_nodes.new('ShaderNodeOutputWorld')
+w_bg = w_nodes.new('ShaderNodeBackground')
+w_gradient = w_nodes.new('ShaderNodeTexGradient')
+w_mapping = w_nodes.new('ShaderNodeMapping')
+w_texcoord = w_nodes.new('ShaderNodeTexCoord')
+w_ramp = w_nodes.new('ShaderNodeValToRGB')
+
+w_ramp.color_ramp.elements[0].color = (0.02, 0.02, 0.04, 1)  # داكن أعلى
+w_ramp.color_ramp.elements[1].color = (0.8, 0.6, 0.5, 1)    # دافئ أسفل
+
+w_bg.inputs['Strength'].default_value = 1.5
+
+w_links.new(w_texcoord.outputs['Generated'], w_mapping.inputs['Vector'])
+w_links.new(w_mapping.outputs['Vector'], w_gradient.inputs['Vector'])
+w_links.new(w_gradient.outputs['Fac'], w_ramp.inputs['Fac'])
+w_links.new(w_ramp.outputs['Color'], w_bg.inputs['Color'])
+w_links.new(w_bg.outputs['Background'], w_output.inputs['Surface'])
+
+# ============================================
+# 9. 💡 إضاءة الاستوديو
+# ============================================
+bpy.ops.object.light_add(type='AREA', location=(4, -4, 6))
+key_light = bpy.context.active_object
+key_light.data.energy = 1000
+key_light.data.size = 3
+key_light.data.color = (1.0, 0.95, 0.9)
+
+bpy.ops.object.light_add(type='AREA', location=(-4, -2, 4))
+fill_light = bpy.context.active_object
+fill_light.data.energy = 400
+fill_light.data.size = 4
+fill_light.data.color = (0.8, 0.9, 1.0)
+
+bpy.ops.object.light_add(type='AREA', location=(0, 5, 5))
+rim_light = bpy.context.active_object
+rim_light.data.energy = 700
+
+# ============================================
+# 10. 🎥 الكاميرا مع Depth of Field
+# ============================================
+bpy.ops.object.camera_add(location=(4, -4, 3), rotation=(math.radians(70), 0, math.radians(45)))
+camera = bpy.context.active_object
+camera.data.lens = 85
+camera.data.dof.use_dof = True
+camera.data.dof.focus_object = berry
+camera.data.dof.aperture_fstop = 2.8
+bpy.context.scene.camera = camera
+
+# ============================================
+# 11. 🎬 الأنيميشن - دوران الفراولة
+# ============================================
+scene = bpy.context.scene
+scene.frame_start = 1
+scene.frame_end = 120  # 5 ثوانٍ بمعدل 24 fps
+
+# Keyframes للدوران
+berry.rotation_euler = (0, 0, 0)
+berry.keyframe_insert(data_path="rotation_euler", frame=1)
+
+berry.rotation_euler = (0, 0, math.radians(360))
+berry.keyframe_insert(data_path="rotation_euler", frame=120)
+
+# جعل الحركة خطية
+if berry.animation_data and berry.animation_data.action:
+    for fcurve in berry.animation_data.action.fcurves:
+        for kf in fcurve.keyframe_points:
+            kf.interpolation = 'LINEAR'
+
+# حركة كاميرا خفيفة (Parallax)
+camera.keyframe_insert(data_path="location", frame=1)
+camera.location.z += 0.3
+camera.keyframe_insert(data_path="location", frame=60)
+camera.location.z -= 0.3
+camera.keyframe_insert(data_path="location", frame=120)
+
+# ============================================
+# 12. ⚙️ إعدادات الرندر النهائية
+# ============================================
+scene.render.engine = 'CYCLES'
+scene.cycles.samples = 256
+scene.cycles.use_denoising = True
+scene.cycles.denoiser = 'OPENIMAGEDENOISE'
+scene.render.resolution_x = 1920
+scene.render.resolution_y = 1080
+scene.render.fps = 24
+
+# Color Management احترافي
+scene.view_settings.view_transform = 'Filmic'
+scene.view_settings.look = 'High Contrast'
+scene.view_settings.exposure = 0.2
+
+# إعدادات الفيديو
+scene.render.image_settings.file_format = 'FFMPEG'
+scene.render.ffmpeg.format = 'MPEG4'
+scene.render.ffmpeg.codec = 'H264'
+scene.render.ffmpeg.constant_rate_factor = 'HIGH'
+scene.render.filepath = "//strawberry_render"
+
+# Bloom للضوء السينمائي (في Eevee، لكن نضبط Cycles كذلك)
+scene.cycles.film_exposure = 1.0
+
+print("✅ تم إنشاء المشهد الكامل بنجاح!")
+print("🎬 لرندر الأنيميشن: Ctrl + F12")
+print("🖼️ لرندر صورة واحدة: F12")
+```
+
+## 🎯 ما تمت إضافته
+
+| الميزة | التفاصيل |
+|--------|----------|
+| 💧 **قطرات ماء** | 25 قطرة شفافة بمؤشر انكسار IOR=1.33، مسطحة كقطرات حقيقية |
+| 🎬 **أنيميشن** | دوران كامل 360° خلال 5 ثوانٍ + حركة كاميرا متموجة |
+| 🌳 **طاولة خشبية** | مادة خشب إجرائية بحلقات النمو الطبيعية |
+| 🌿 **أوراق نعناع** | 3 أوراق زخرفية موزعة حول الفراولة |
+| 🍓 **فراولات خلفية** | فراولتان إضافيتان لإثراء المشهد |
+| 🖼️ **سماء إجرائية** | تدرج لوني دافئ يحاكي ضوء غروب استوديو |
+| 📷 **Depth of Field** | تركيز سينمائي f/2.8 مع تشويش خلفي |
+| 🎨 **Filmic + Exposure** | معالجة ألوان احترافية |
+| 🔧 **OpenImageDenoise** | إزالة ضوضاء عالية الجودة من Intel |
+
+## 📐 إعدادات الرندر
+
+- **الدقة**: 1920×1080 (Full HD)
+- **المعدل**: 24 fps
+- **المدة**: 5 ثوانٍ (120 إطار)
+- **الصيغة**: MP4/H.264
+- **العينات**: 256 sample + Denoising
+
+## ⚡ نصائح للأداء
+
+```python
+# لرندر أسرع للمعاينة، عدّل هذه القيم:
+scene.cycles.samples = 64        # بدلاً من 256
+subsurf.render_levels = 3        # بدلاً من 4
+settings.count = 120             # بدلاً من 200 بذرة
+```
+
+## 🎬 لتشغيل الأنيميشن
+
+1. اضغط **Ctrl + F12** لبدء رندر الأنيميشن
+2. سيُحفظ الفيديو في نفس مجلد ملف Blender
+3. الزمن المتوقع: ~20-40 دقيقة (حسب GPU)
+
+هل تريد أن أضيف مؤثرات إضافية مثل:
+- 💨 **بخار/ضباب** حول الفراولة؟
+- ✨ **Bloom سينمائي** للأضواء؟
+- 🍫 **قطرات شوكولاتة سائلة** تنزل على الفراولة؟
+- 🎵 **سكربت لإضافة موسيقى** للفيديو الناتج؟
